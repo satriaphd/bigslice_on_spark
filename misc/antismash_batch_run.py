@@ -66,7 +66,6 @@ def main():
 
 		# repartition and process genomes
 		sc.setJobGroup("processing_genomes", "processing_genomes")
-		to_process = to_process.repartition(num_input)
 		to_process = to_process.map(
 			lambda fp: (
 				fp,
