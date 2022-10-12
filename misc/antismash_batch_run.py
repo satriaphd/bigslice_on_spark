@@ -75,7 +75,8 @@ def main():
 		)
 		to_process = to_process.map(run_antismash).collect()
 		print("successfully processed {:,}/{:,} genomes".format(
-			sum(to_process) / len(to_process)
+			sum(to_process),
+			len(to_process)
 		))
 		return 0
 
