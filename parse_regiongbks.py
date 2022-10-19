@@ -16,7 +16,8 @@ input:
 """
 
 from pyspark.sql import SparkSession
-from sys import argv
+from pyspark.sql.types import StructType, StructField, StringType, LongType, MapType, ArrayType
+import argparse
 import glob
 import subprocess
 from os import path, makedirs
@@ -27,96 +28,78 @@ from io import StringIO
 
 
 def main():
-    input_folder = path.abspath(argv[1])
-    output_folder = path.abspath(argv[2])
-    temp_folder = path.join(output_folder, "temp")
-    num_threads = int(argv[3])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input_folder", type=str, help="path to input folder")
+    parser.add_argument("output_folder", type=str, help="path to output folder")
+    parser.add_argument("--preprocessed_data", type=bool, default=False, help="is input data preprocessed using 'prepare_bgcs_data.py'?", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--num_partitions", type=int, default=0, help="set number of partitions")
+    args = parser.parse_args()
 
-    if not path.exists(output_folder):
-        makedirs(temp_folder)
-    else:
-        print("output folder exists!")
-        return 1
+    temp_folder = path.join(args.output_folder, "temp")
 
-    sc_master = "local[{}]".format(num_threads)
+    if not args.output_folder.startswith("hdfs://"):
+        if not path.exists(args.output_folder):
+            makedirs(temp_folder)
+        else:
+            print("output folder exists!")
+            return 1
+
     with SparkSession.builder\
-        .master(sc_master)\
-        .config("spark.executor.cores", "1")\
-        .config("spark.executor.memory", "2G")\
         .getOrCreate() as spark:
-        sc = spark.sparkContext
+        sc = spark.sparkContext        
+        sc._jsc.hadoopConfiguration().set("textinputformat.record.delimiter",">>>split_gbk_file:#")
 
-        pattern_bgc_files = path.join(input_folder, "*/*.region*.gbk")
+        if args.preprocessed_data:
+            df = sc.textFile(path.join(args.input_folder, "part-*")).map(lambda x: tuple(x.split("\n", 1)) if x != "" else ("", ""))
+        else:
+            df = sc.wholeTextFiles(path.join(args.input_folder, "*/*/*.region*.gbk"))
 
-        # get number of partitions
-        num_files = sum([True for i in glob.iglob(pattern_bgc_files)])
-        num_partitions = max(num_threads, (num_files // 100) + 1)
+        if args.num_partitions < 1:
+            args.num_partitions = sc._jsc.sc().getExecutorMemoryStatus().keySet().size() * 4
 
-        def combine_texts(pidx, txts):
-            genome_names = []
-            genbank_text = ""
-            for filepath, text in txts:
-                genome_names.append(filepath.split("/")[-2])
-                genbank_text += text
-            yield (pidx, genome_names, genbank_text)
+        df = df.repartition(args.num_partitions)
 
-        parsed_results = sc.wholeTextFiles(pattern_bgc_files, minPartitions=num_partitions)\
-                .mapPartitionsWithIndex(combine_texts)\
-                .map(parse_bgcs)\
-                .repartition(num_threads)\
-                .map(lambda row: (temp_folder, row[0], row[1], row[2]))\
-                .toLocalIterator()
+        df_schema = StructType([
+            StructField('dataset_name', StringType(), False),
+            StructField('genome_name', StringType(), False),
+            StructField('file_name', StringType(), False),
+            StructField('feature_type', StringType(), False),
+            StructField('feature_qualifiers', MapType(StringType(), ArrayType(StringType(), False), False), False),
+            StructField('feature_start', LongType(), False),
+            StructField('feature_end', LongType(), False)
+        ])
+        parsed_results = df\
+            .flatMap(parse_bgcs)\
+            .toDF(schema = df_schema)\
+            .write.parquet(path.join(temp_folder, "parsed_rows"))
 
-        for tup in parsed_results:
-            store_parsed_bgcs(tup)
+        sc._jsc.hadoopConfiguration().set("textinputformat.record.delimiter",">>>split_gbk_file:#")
 
         return 0
 
 
-def store_parsed_bgcs(tup):
-    output_folder, pidx, result_bgcs, result_cds = tup
-    with open(path.join(output_folder, "bgc-{}.tsv".format(pidx)), "w") as oo:
-        for row in result_bgcs:
-            oo.write("{}\n".format("\t".join(map(str, row))))
-    with open(path.join(output_folder, "cds-{}.tsv".format(pidx)), "w") as oo:
-        for row in result_cds:
-            oo.write("{}\n".format("\t".join(map(str, row))))
-
-
 def parse_bgcs(tup):
-    pidx, genome_names, gbk_text = tup
-    
-    result_bgcs = []
-    result_cds = []
+    fp, gbk_text = tup
+
+    if fp == "":
+        return []
+
+    results = []
 
     for record in SeqIO.parse(StringIO(gbk_text), "genbank"):
-        genome_name = genome_names.pop(0)
+        dataset_name, genome_name, file_name = fp.split("/")[-3:]
         for feature in record.features:
-            if feature.type == "region":
-                is_complete = feature.qualifiers["contig_edge"][0] == "False"
-                region_num = feature.qualifiers["region_number"][0]
-                bgc_class = ";".join(set(feature.qualifiers["product"]))
-                break
-        result_bgcs.append([
-            genome_name,
-            record.id,
-            region_num,
-            bgc_class,
-        ])
-        cds_num = 1
-        for feature in record.features:
-            if feature.type == "CDS":
-                result_cds.append([
-                    genome_name,
-                    record.id,
-                    region_num,
-                    cds_num,
-                    feature.location.start,
-                    feature.location.end
-                ])
-                cds_num += 1
+            results.append((
+                dataset_name,
+                genome_name,
+                file_name,
+                feature.type,
+                dict(feature.qualifiers),
+                int(feature.location.start),
+                int(feature.location.end)
+            ))
 
-    return (pidx, result_bgcs, result_cds)
+    return results
 
 
 if __name__ == "__main__":
