@@ -104,3 +104,62 @@ class AxolotlDF(ABC):
             lambda x, y: (x[0] + 1, x[1]) if y else (x[0], x[1] + 1),
             lambda x, y: (x[0] + y[0], x[1] + y[1])
         )
+
+
+class AxolotlIO(ABC):
+    """Axolotl basic Input/Output (mostly input) class"""
+    
+    @classmethod
+    def loadSmallFiles(cls, file_patterns:list[str], concatenated:bool=False) -> AxolotlDF:
+        raise NotImplementedError()
+    
+    @classmethod
+    def loadBigFiles(cls, file_paths:list[str], intermediate_pq_path:str) -> AxolotlDF:
+        spark = SparkSession.getActiveSession()
+        if spark == None:
+            raise Exception("can't find any Spark active session!")
+        sc = spark.sparkContext
+        
+        # make sure the intermediate parquet path is empty
+        if check_file_exists(intermediate_pq_path):
+            raise Exception("intermediate parque file path exists! {}".format(intermediate_pq_path))
+        
+        # change delimiter for the custom textFiles() function
+        delim_default = sc._jsc.hadoopConfiguration().get("textinputformat.record.delimiter")
+        sc._jsc.hadoopConfiguration().get("textinputformat.record.delimiter", cls._getRecordDelimiter())
+        
+        # parse each file_path separately and store in the intermediate parquet storage
+        for file_path in file_paths:
+            spark.createDataFrame(
+                sc.textFile(file_path).map(cls._parseRecord),
+                schema=cls._getOutputDFclass().getSchema()
+            ).write.mode('append').parquet(intermediate_pq_path)            
+            
+        # revert delimiter back to what it was before
+        sc._jsc.hadoopConfiguration().get("textinputformat.record.delimiter", delim_default)
+            
+        # load DF from the intermediate parquet path, then output AxolotlDF
+        return cls._getOutputDFclass()(spark.read.parquet(intermediate_pq_path))        
+
+    @classmethod
+    def concatSmallFiles(cls, file_patterns:list[str], path_output:str, num_partitions:int=-1):
+        raise NotImplementedError()
+    
+    @classmethod
+    def _getFileDelimiter(cls) -> tuple[str, str]:
+        return ("\n>>>>>file_path:", "\n")
+    
+    @classmethod
+    @abstractmethod
+    def _getRecordDelimiter(cls) -> str:
+        raise NotImplementedError("calling an unimplemented abstract method _getRecordDelimiter()")
+    
+    @classmethod
+    @abstractmethod
+    def _getOutputDFclass(cls) -> AxolotlDF:
+        raise NotImplementedError("calling an unimplemented abstract method _getOutputDFclass()")
+    
+    @classmethod
+    @abstractmethod
+    def _parseRecord(cls, text:str) -> list[Row]:
+        raise NotImplementedError("calling an unimplemented abstract method _parseRecord()")
