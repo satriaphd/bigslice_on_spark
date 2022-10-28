@@ -26,12 +26,12 @@ class SequenceDF(AxolotlDF):
     @classmethod
     @abstractmethod
     def getAllowedLetters(cls) -> str:
-        pass
+        raise NotImplementedError("calling an unimplemented abstract method getAllowedLetters()")
         
     @classmethod
     @abstractmethod
     def validateRowSpecific(cls, row: Row) -> bool:
-        pass
+        raise NotImplementedError("calling an unimplemented abstract method validateRowSpecific()")
         
     @classmethod
     def validateRow(cls, row: Row) -> bool:

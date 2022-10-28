@@ -15,7 +15,7 @@ class AxolotlDF(ABC):
     """Axoltl basic DataFrame class"""
 
     def __init__(self, df:DataFrame):
-        if self.__class__.getSchema().jsonValue() != df.schema.jsonValue():
+        if not self.getSchema() == None and self.__class__.getSchema().jsonValue() != df.schema.jsonValue():
             raise AttributeError((
                 "schema conflict on the loaded DataFrame object,"
                 " please use schema={}.getSchema() when creating the"
@@ -33,7 +33,7 @@ class AxolotlDF(ABC):
         return metadata
 
     @classmethod
-    def readParquet(cls, src_parquet:str):
+    def readParquet(cls, src_parquet:str, num_partitions:int=-1):
         spark = SparkSession.getActiveSession()
         if spark == None:
             raise Exception("can't find any Spark active session!")        
@@ -49,15 +49,21 @@ class AxolotlDF(ABC):
                     metadata["class_name"],
                     cls.__name__
                 ))
-            if cls.getSchema().jsonValue() != metadata["schema"]:
+            if not cls.getSchema() == None and cls.getSchema().jsonValue() != metadata["schema"]:
                 raise AttributeError("schema conflict on the loaded parquet file")
-            
-        return cls(spark.read.schema(cls.getSchema()).parquet(src_parquet))
+        
+        if num_partitions > 0:
+            return cls(spark.read.schema(cls.getSchema()).parquet(src_parquet).repartition(num_partitions))
+        else:
+            return cls(spark.read.schema(cls.getSchema()).parquet(src_parquet))
     
-    def writeParquet(self, parquet_file_path:str):
+    def writeParquet(self, parquet_file_path:str, num_partitions:int=-1):
         if path.exists(parquet_file_path):
             raise Exception("path exists! {}".format(parquet_file_path))
-        self.df.write.option("schema", self.__class__.getSchema()).parquet(parquet_file_path)
+        if num_partitions > 0:
+            self.df.repartition(num_partitions).write.option("schema", self.__class__.getSchema()).parquet(parquet_file_path)
+        else:
+            self.df.write.option("schema", self.__class__.getSchema()).parquet(parquet_file_path)
         metadata_path = path.join(parquet_file_path, ".axolotl_metadata.json")        
         with open(metadata_path, "w") as outfile:
             outfile.write(json.dumps(self.getMetadata()))
@@ -66,13 +72,13 @@ class AxolotlDF(ABC):
     @abstractmethod
     def getSchema(cls) -> types.StructType:
         """return: DF schema"""
-        pass
+        raise NotImplementedError("calling an unimplemented abstract method getSchema()")
     
     @classmethod
     @abstractmethod
     def validateRow(cls, row: Row) -> bool:
         """return: validated/not"""
-        pass
+        raise NotImplementedError("calling an unimplemented abstract method validateRow()")
     
     def filterValids(self) -> DataFrame:
         return self.__class__(
