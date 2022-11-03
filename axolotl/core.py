@@ -5,10 +5,14 @@ Contain core classes and functions
 
 from pyspark.sql import DataFrame, Row, types
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import lit, monotonically_increasing_id
+
+from axolotl.utils import check_file_exists, is_directory
 
 from abc import ABC, abstractmethod
 from os import path
 import json
+import glob
 
 
 class AxolotlDF(ABC):
@@ -33,7 +37,7 @@ class AxolotlDF(ABC):
         return metadata
 
     @classmethod
-    def readParquet(cls, src_parquet:str, num_partitions:int=-1):
+    def load(cls, src_parquet:str, num_partitions:int=-1):
         spark = SparkSession.getActiveSession()
         if spark == None:
             raise Exception("can't find any Spark active session!")        
@@ -57,7 +61,7 @@ class AxolotlDF(ABC):
         else:
             return cls(spark.read.schema(cls.getSchema()).parquet(src_parquet))
     
-    def writeParquet(self, parquet_file_path:str, num_partitions:int=-1):
+    def store(self, parquet_file_path:str, num_partitions:int=-1):
         if path.exists(parquet_file_path):
             raise Exception("path exists! {}".format(parquet_file_path))
         if num_partitions > 0:
@@ -106,44 +110,164 @@ class AxolotlDF(ABC):
         )
 
 
+class ioDF(AxolotlDF):
+    
+    @classmethod
+    def getSchema(cls) -> types.StructType:
+        return cls._getSchemaSpecific()\
+            .add(types.StructField("record_id", types.LongType()))\
+            .add(types.StructField("file_path", types.StringType()))
+    
+    @classmethod
+    @abstractmethod
+    def _getSchemaSpecific(cls):
+        raise NotImplementedError("calling an unimplemented abstract method _getSchemaSpecific()")
+
+
 class AxolotlIO(ABC):
     """Axolotl basic Input/Output (mostly input) class"""
     
     @classmethod
-    def loadSmallFiles(cls, file_patterns:list[str], concatenated:bool=False) -> AxolotlDF:
-        raise NotImplementedError()
-    
-    @classmethod
-    def loadBigFiles(cls, file_paths:list[str], intermediate_pq_path:str) -> AxolotlDF:
+    def loadSmallFiles(cls, file_pattern:str) -> ioDF:
         spark = SparkSession.getActiveSession()
         if spark == None:
             raise Exception("can't find any Spark active session!")
         sc = spark.sparkContext
         
+        # input check
+        if not isinstance(file_pattern, str):
+            raise TypeError("expected file_pattern to be a string")
+            
+        return cls._getOutputDFclass()(
+            sc.wholeTextFiles(file_pattern)\
+            .reduceByKey(lambda row1, row2: row1)\
+            .flatMap(cls._parseFile)\
+            .toDF(schema=cls._getOutputDFclass().getSchema())
+        )        
+
+    @classmethod
+    def loadConcatenatedFiles(cls, file_pattern:str, persist:bool=True, intermediate_pq_path:str="") -> ioDF:
+        spark = SparkSession.getActiveSession()
+        if spark == None:
+            raise Exception("can't find any Spark active session!")
+        sc = spark.sparkContext
+        
+        # input check
+        if not isinstance(file_pattern, str):
+            raise TypeError("expected file_pattern to be a string")
+        if not isinstance(intermediate_pq_path, str):
+            raise TypeError("expected intermediate_pq_path to be a string")
+        if not isinstance(persist, bool):
+            raise TypeError("expected persist to be a boolean")
+            
+        if intermediate_pq_path != "":
+            if check_file_exists(intermediate_pq_path):
+                raise Exception("intermediate parque file path exists! {}".format(intermediate_pq_path))
+        else:
+            if not persist:
+                raise Exception("either persist needs to be True or intermediate_pq_path needs to be supplied")
+
+        # change delimiter for the custom textFiles() function
+        delim_default = sc._jsc.hadoopConfiguration().get("textinputformat.record.delimiter")
+        sc._jsc.hadoopConfiguration().set("textinputformat.record.delimiter", cls._getFileDelimiter()[0])
+
+        # parse dataframe and evaluate
+        df = sc.textFile(file_pattern)\
+        .map(lambda x: x[:-1])\
+        .filter(lambda x: x != "")\
+        .map(lambda x: tuple(x.split(cls._getFileDelimiter()[1], 1)))\
+        .reduceByKey(lambda row1, row2: row1)\
+        .flatMap(cls._parseFile)\
+        .toDF(schema=cls._getOutputDFclass().getSchema())
+        
+        if persist:
+            df.persist()
+            if intermediate_pq_path == "":
+                df.count()
+            else:
+                df.write.parquet(intermediate_pq_path)
+        elif intermediate_pq_path != "":
+            df.write.parquet(intermediate_pq_path)
+            df = spark.read.parquet(intermediate_pq_path)
+
+        # revert delimiter back to what it was before
+        if delim_default != None:
+            sc._jsc.hadoopConfiguration().set("textinputformat.record.delimiter", delim_default)
+        else:
+            sc._jsc.hadoopConfiguration().unset("textinputformat.record.delimiter")
+            
+        return cls._getOutputDFclass()(df)
+        
+    @classmethod
+    def loadBigFiles(cls, file_paths:list[str], intermediate_pq_path:str) -> ioDF:
+        spark = SparkSession.getActiveSession()
+        if spark == None:
+            raise Exception("can't find any Spark active session!")
+        sc = spark.sparkContext
+        
+        # input check
+        if not isinstance(intermediate_pq_path, str):
+            raise TypeError("expected intermediate_pq_path to be a string")
+
         # make sure the intermediate parquet path is empty
         if check_file_exists(intermediate_pq_path):
             raise Exception("intermediate parque file path exists! {}".format(intermediate_pq_path))
         
+        # remove double filepaths
+        file_paths = list(set(file_paths))
+
+        # check each files
+        for file_path in file_paths:
+            if not check_file_exists(file_path):
+                raise FileNotFoundError(file_path)
+            elif is_directory(file_path):
+                raise FileNotFoundError("{} is a directory".format(file_path))
+        
         # change delimiter for the custom textFiles() function
         delim_default = sc._jsc.hadoopConfiguration().get("textinputformat.record.delimiter")
-        sc._jsc.hadoopConfiguration().get("textinputformat.record.delimiter", cls._getRecordDelimiter())
+        sc._jsc.hadoopConfiguration().set("textinputformat.record.delimiter", cls._getRecordDelimiter())
         
         # parse each file_path separately and store in the intermediate parquet storage
         for file_path in file_paths:
             spark.createDataFrame(
-                sc.textFile(file_path).map(cls._parseRecord),
-                schema=cls._getOutputDFclass().getSchema()
-            ).write.mode('append').parquet(intermediate_pq_path)            
+                sc.textFile(file_path).filter(lambda x: x != "").map(cls._parseRecord),
+                schema=cls._getOutputDFclass()._getSchemaSpecific()
+            )\
+            .withColumn("record_id", monotonically_increasing_id())\
+            .withColumn("file_path", lit(file_path))\
+            .write.mode('append').parquet(intermediate_pq_path)            
             
         # revert delimiter back to what it was before
-        sc._jsc.hadoopConfiguration().get("textinputformat.record.delimiter", delim_default)
+        if delim_default != None:
+            sc._jsc.hadoopConfiguration().set("textinputformat.record.delimiter", delim_default)
+        else:
+            sc._jsc.hadoopConfiguration().unset("textinputformat.record.delimiter")
             
         # load DF from the intermediate parquet path, then output AxolotlDF
         return cls._getOutputDFclass()(spark.read.parquet(intermediate_pq_path))        
 
     @classmethod
-    def concatSmallFiles(cls, file_patterns:list[str], path_output:str, num_partitions:int=-1):
-        raise NotImplementedError()
+    def concatSmallFiles(cls, file_pattern:str, path_output:str, num_partitions:int=-1):
+        spark = SparkSession.getActiveSession()
+        if spark == None:
+            raise Exception("can't find any Spark active session!")
+        sc = spark.sparkContext
+        
+        # make sure the outputh path is empty
+        if check_file_exists(path_output):
+            raise Exception("path_output file path exists! {}".format(path_output))
+        if not isinstance(file_pattern, str):
+            raise TypeError("expected file_pattern to be a string")
+        
+        # import RDD
+        rdd_imported = sc.wholeTextFiles(file_pattern)\
+        .reduceByKey(lambda row1, row2: row1)\
+        .map(lambda x: cls._getFileDelimiter()[0] + x[0] + cls._getFileDelimiter()[1] + x[1])\
+        
+        if num_partitions > 0:
+            rdd_imported = rdd_imported.repartition(num_partitions)            
+        
+        rdd_imported.saveAsTextFile(path_output)
     
     @classmethod
     def _getFileDelimiter(cls) -> tuple[str, str]:
@@ -156,10 +280,26 @@ class AxolotlIO(ABC):
     
     @classmethod
     @abstractmethod
-    def _getOutputDFclass(cls) -> AxolotlDF:
+    def _getOutputDFclass(cls) -> ioDF:
         raise NotImplementedError("calling an unimplemented abstract method _getOutputDFclass()")
     
     @classmethod
     @abstractmethod
-    def _parseRecord(cls, text:str) -> list[Row]:
+    def _parseRecord(cls, text:str) -> list[dict]:
         raise NotImplementedError("calling an unimplemented abstract method _parseRecord()")
+
+    @classmethod
+    def _parseFile(cls, tup:tuple[str, str]) -> list[Row]:
+        file_path, text = tup
+        return [
+            {
+                **cls._parseRecord(record_text),
+                **{
+                    "record_id": i,
+                    "file_path": file_path
+                }
+            } for i, record_text in enumerate(
+                text.split(cls._getRecordDelimiter())
+            ) if i > 0
+        ]
+    

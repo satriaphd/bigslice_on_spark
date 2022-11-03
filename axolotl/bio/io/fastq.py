@@ -1,0 +1,40 @@
+"""axolotl.bio.io.fastq
+
+Contain classes definition for loading single and paired FASTQ data.
+
+TODO:
+- implement paired reads parsing
+"""
+
+from axolotl.core import AxolotlIO
+from axolotl.bio.data.sequence import ReadSequenceDF
+
+
+class FastqIO(AxolotlIO):
+
+    # quality metrics
+    QUAL_PHRED33 = {
+        c: q for q, c in enumerate(
+            "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+        )
+    }
+    
+    @classmethod
+    def _getRecordDelimiter(cls) -> str:
+        return "@"
+    
+    @classmethod
+    def _getOutputDFclass(cls) -> ReadSequenceDF:
+        return ReadSequenceDF
+    
+    @classmethod
+    def _parseRecord(cls, text:str) -> dict:
+        # TODO: parse quality other than Phred+33
+        rows = text.split("\n")[:4]
+        return {
+            "seq_id": rows[0].split(" ", 1)[0],
+            "desc": rows[0].split(" ", 1)[1] if " " in " " in rows[0] else "",
+            "sequence": rows[1],
+            "length": len(rows[1]),
+            "quality_scores": [cls.QUAL_PHRED33[x] for x in rows[3]]
+        }

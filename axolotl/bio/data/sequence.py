@@ -1,23 +1,22 @@
 """axolotl.bio.data.sequence
 
-Contain classes definiten for Sequence DataFrames.
+Contain classes definition for Sequence DataFrames.
 """
 
 from pyspark.sql import DataFrame, Row, types
 from pyspark.sql import SparkSession
 from abc import abstractmethod
 
-from axolotl.core import AxolotlDF
+from axolotl.core import ioDF
 
 
-class SequenceDF(AxolotlDF):
+class SequenceDF(ioDF):
     """basic sequence dataframe (abstract class)"""
     
     @classmethod
-    def getSchema(cls) -> types.StructType:
+    def _getSchemaSpecific(cls) -> types.StructType:
         return types.StructType([
-            types.StructField('filepath', types.StringType()),
-            types.StructField('id', types.StringType()),
+            types.StructField('seq_id', types.StringType()),
             types.StructField('desc', types.StringType()),
             types.StructField('sequence', types.StringType()),
             types.StructField('length', types.LongType())
@@ -46,8 +45,8 @@ class SequenceDF(AxolotlDF):
 class ReadSequenceDF(SequenceDF):
     
     @classmethod
-    def getSchema(cls) -> types.StructType:
-        return SequenceDF.getSchema()\
+    def _getSchemaSpecific(cls) -> types.StructType:
+        return SequenceDF._getSchemaSpecific()\
             .add(types.StructField("quality_scores", types.ArrayType(types.ByteType())))
 
     @classmethod
@@ -64,8 +63,8 @@ class ReadSequenceDF(SequenceDF):
 class PairedReadSequenceDF(ReadSequenceDF):
     
     @classmethod
-    def getSchema(cls) -> types.StructType:
-        return ReadSequenceDF.getSchema()\
+    def _getSchemaSpecific(cls) -> types.StructType:
+        return ReadSequenceDF._getSchemaSpecific()\
             .add(types.StructField("sequence_2", types.StringType()))\
             .add(types.StructField("length_2", types.LongType()))\
             .add(types.StructField("quality_scores_2", types.ArrayType(types.ByteType())))
@@ -84,8 +83,8 @@ class PairedReadSequenceDF(ReadSequenceDF):
 class ProtSequenceDF(SequenceDF):
     
     @classmethod
-    def getSchema(cls) -> types.StructType:
-        return SequenceDF.getSchema()
+    def _getSchemaSpecific(cls) -> types.StructType:
+        return SequenceDF._getSchemaSpecific()
 
     @classmethod
     def getAllowedLetters(cls) -> str:
@@ -99,8 +98,8 @@ class ProtSequenceDF(SequenceDF):
 class ContigSequenceDF(SequenceDF):
     
     @classmethod
-    def getSchema(cls) -> types.StructType:
-        return SequenceDF.getSchema()
+    def _getSchemaSpecific(cls) -> types.StructType:
+        return SequenceDF._getSchemaSpecific()
 
     @classmethod
     def getAllowedLetters(cls) -> str:
