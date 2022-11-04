@@ -296,7 +296,7 @@ class AxolotlIO(ABC):
         for i, record_text in enumerate(
             text.split(cls._getRecordDelimiter())
         ):
-            if record_text != "":
+            if record_text == "":
                 continue
             parsed = cls._parseRecord(record_text)
             if parsed == None:
