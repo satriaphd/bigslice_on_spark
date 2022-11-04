@@ -211,7 +211,7 @@ class AxolotlIO(ABC):
             raise TypeError("expected intermediate_pq_path to be a string")
         
         # remove double filepaths
-        file_paths = list(set(file_paths))
+        file_paths = set(file_paths)
 
         # check if previously processed
         use_preprocessed = False
