@@ -209,40 +209,67 @@ class AxolotlIO(ABC):
         # input check
         if not isinstance(intermediate_pq_path, str):
             raise TypeError("expected intermediate_pq_path to be a string")
-
-        # make sure the intermediate parquet path is empty
-        if check_file_exists(intermediate_pq_path):
-            raise Exception("intermediate parque file path exists! {}".format(intermediate_pq_path))
         
         # remove double filepaths
         file_paths = list(set(file_paths))
 
-        # check each files
-        for file_path in file_paths:
-            if not check_file_exists(file_path):
-                raise FileNotFoundError(file_path)
-            elif is_directory(file_path):
-                raise FileNotFoundError("{} is a directory".format(file_path))
-        
-        # change delimiter for the custom textFiles() function
-        delim_default = sc._jsc.hadoopConfiguration().get("textinputformat.record.delimiter")
-        sc._jsc.hadoopConfiguration().set("textinputformat.record.delimiter", cls._getRecordDelimiter())
-        
-        # parse each file_path separately and store in the intermediate parquet storage
-        for file_path in file_paths:
-            spark.createDataFrame(
-                sc.textFile(file_path).filter(lambda x: x != "").map(cls._parseRecord),
-                schema=cls._getOutputDFclass()._getSchemaSpecific()
-            )\
-            .withColumn("record_id", monotonically_increasing_id())\
-            .withColumn("file_path", lit(file_path))\
-            .write.mode('append').parquet(intermediate_pq_path)            
+        # check if previously processed
+        use_preprocessed = False
+        if check_file_exists(intermediate_pq_path):
+            try:
+                parsed_filepaths = set([
+                    row.file_path for row in\
+                    spark.read.parquet(intermediate_pq_path)\
+                    .select("file_path").distinct().collect()
+                ])
+                if file_paths == parsed_filepaths:
+                    use_preprocessed = True
+                else:
+                    raise Exception((
+                        "pre-processed intermediate_pq_path doesn't match"
+                        " the list of input paths! {}"
+                    ).format(intermediate_pq_path))
+            except:
+                raise Exception((
+                    "failed to process intermediate_pq_path! {}"
+                ).format(intermediate_pq_path))
+
+        if not use_preprocessed:
+
+            # check each files
+            for file_path in file_paths:
+                if not check_file_exists(file_path):
+                    raise FileNotFoundError(file_path)
+                elif is_directory(file_path):
+                    raise FileNotFoundError("{} is a directory".format(file_path))
             
-        # revert delimiter back to what it was before
-        if delim_default != None:
-            sc._jsc.hadoopConfiguration().set("textinputformat.record.delimiter", delim_default)
-        else:
-            sc._jsc.hadoopConfiguration().unset("textinputformat.record.delimiter")
+            # change delimiter for the custom textFiles() function
+            delim_default = sc._jsc.hadoopConfiguration().get("textinputformat.record.delimiter")
+            sc._jsc.hadoopConfiguration().set("textinputformat.record.delimiter", cls._getRecordDelimiter())
+            
+            # parse each file_path separately and store in the intermediate parquet storage
+            for file_path in file_paths:
+                print("INFO: parsing big file {}...".format(file_path))
+                # check partitioning
+                if sc.textFile(file_path).getNumPartitions() == 1:
+                    print((
+                        "WARNING: loading {} only returned one partition,"
+                        " use unzipped files whenever possible to allow splitting files"
+                    ).format(file_path))
+                # parse
+                spark.createDataFrame(
+                    sc.textFile(file_path).filter(lambda x: x != "").map(cls._parseRecord),
+                    schema=cls._getOutputDFclass()._getSchemaSpecific()
+                )\
+                .withColumn("record_id", monotonically_increasing_id())\
+                .withColumn("file_path", lit(file_path))\
+                .write.mode('append').parquet(intermediate_pq_path)            
+                
+            # revert delimiter back to what it was before
+            if delim_default != None:
+                sc._jsc.hadoopConfiguration().set("textinputformat.record.delimiter", delim_default)
+            else:
+                sc._jsc.hadoopConfiguration().unset("textinputformat.record.delimiter")
             
         # load DF from the intermediate parquet path, then output AxolotlDF
         return cls._getOutputDFclass()(spark.read.parquet(intermediate_pq_path))        
