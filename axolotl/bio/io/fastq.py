@@ -34,10 +34,16 @@ class FastqIO(AxolotlIO):
         if text[0] == "@":
             text = text[1:]
         rows = text.rstrip("\n").split("\n")
-        return {
-            "seq_id": rows[0].split(" ", 1)[0],
-            "desc": rows[0].split(" ", 1)[1] if " " in " " in rows[0] else "",
-            "sequence": rows[1],
-            "length": len(rows[1]),
-            "quality_scores": [cls.QUAL_PHRED33[x] for x in rows[3]]
-        }
+        try:
+            return {
+                "seq_id": rows[0].split(" ", 1)[0],
+                "desc": rows[0].split(" ", 1)[1] if " " in " " in rows[0] else "",
+                "sequence": rows[1],
+                "length": len(rows[1]),
+                "quality_scores": [cls.QUAL_PHRED33[x] for x in rows[3]]
+            }
+        except:
+            print("WARNING: failed parsing a malformed record text '{}'".format(
+                text if len(text) < 50 else text[:50] + "..."
+            ))
+            return None
