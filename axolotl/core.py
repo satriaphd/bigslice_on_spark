@@ -11,6 +11,7 @@ from axolotl.utils import check_file_exists, is_directory
 
 from abc import ABC, abstractmethod
 from os import path
+from typing import List, Dict, Tuple
 import json
 import glob
 
@@ -270,7 +271,7 @@ class AxolotlIO(ABC):
         rdd_imported.saveAsTextFile(path_output)
     
     @classmethod
-    def _getFileDelimiter(cls) -> tuple[str, str]:
+    def _getFileDelimiter(cls) -> Tuple[str, str]:
         return ("\n>>>>>file_path:", "\n")
     
     @classmethod
@@ -285,11 +286,11 @@ class AxolotlIO(ABC):
     
     @classmethod
     @abstractmethod
-    def _parseRecord(cls, text:str) -> list[dict]:
+    def _parseRecord(cls, text:str) -> List[Dict]:
         raise NotImplementedError("calling an unimplemented abstract method _parseRecord()")
 
     @classmethod
-    def _parseFile(cls, tup:tuple[str, str]) -> list[Row]:
+    def _parseFile(cls, tup:Tuple[str, str]) -> List[Row]:
         file_path, text = tup
         result = []
         for i, record_text in enumerate(

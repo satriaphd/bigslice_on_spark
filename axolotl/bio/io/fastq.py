@@ -8,6 +8,7 @@ TODO:
 
 from axolotl.core import AxolotlIO
 from axolotl.bio.data.sequence import ReadSequenceDF
+from typing import Dict
 
 
 class FastqIO(AxolotlIO):
@@ -28,7 +29,7 @@ class FastqIO(AxolotlIO):
         return ReadSequenceDF
     
     @classmethod
-    def _parseRecord(cls, text:str) -> dict:
+    def _parseRecord(cls, text:str) -> Dict:
         # TODO: parse quality other than Phred+33
         if text[0] == "@":
             text = text[1:]
