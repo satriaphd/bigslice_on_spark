@@ -216,22 +216,18 @@ class AxolotlIO(ABC):
         # check if previously processed
         use_preprocessed = False
         if check_file_exists(intermediate_pq_path):
-            try:
-                parsed_filepaths = set([
-                    row.file_path for row in\
-                    spark.read.parquet(intermediate_pq_path)\
-                    .select("file_path").distinct().collect()
-                ])
-                if file_paths == parsed_filepaths:
-                    use_preprocessed = True
-                else:
-                    raise Exception((
-                        "pre-processed intermediate_pq_path doesn't match"
-                        " the list of input paths! {}"
-                    ).format(intermediate_pq_path))
-            except:
+            print("INFO: trying to load pre-processed intermediate_pq_path...")
+            parsed_filepaths = set([
+                row.file_path for row in\
+                spark.read.parquet(intermediate_pq_path)\
+                .select("file_path").distinct().collect()
+            ])
+            if file_paths == parsed_filepaths:
+                use_preprocessed = True
+            else:
                 raise Exception((
-                    "failed to process intermediate_pq_path! {}"
+                    "pre-processed intermediate_pq_path doesn't match"
+                    " the list of input paths! {}"
                 ).format(intermediate_pq_path))
 
         if not use_preprocessed:
