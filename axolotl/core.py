@@ -103,7 +103,7 @@ class AxolotlDF(ABC):
             .toDF(schema=self.__class__.getSchema())
         )
                 
-    def countValids(self) -> tuple[int, int]:
+    def countValids(self) -> Tuple[int, int]:
         return self.df.rdd.map(self.__class__.validateRow).aggregate(
             (0, 0),
             lambda x, y: (x[0] + 1, x[1]) if y else (x[0], x[1] + 1),
