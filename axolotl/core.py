@@ -291,15 +291,21 @@ class AxolotlIO(ABC):
     @classmethod
     def _parseFile(cls, tup:tuple[str, str]) -> list[Row]:
         file_path, text = tup
-        return [
-            {
+        result = []
+        for i, record_text in enumerate(
+            text.split(cls._getRecordDelimiter())
+        ):
+            if record_text != "":
+                continue
+            parsed = cls._parseRecord(record_text)
+            if parsed == None:
+                continue
+            result.append({
                 **cls._parseRecord(record_text),
                 **{
                     "record_id": i,
                     "file_path": file_path
                 }
-            } for i, record_text in enumerate(
-                text.split(cls._getRecordDelimiter())
-            ) if i > 0
-        ]
+            })
+        return result
     

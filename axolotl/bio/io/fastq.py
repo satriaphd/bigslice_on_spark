@@ -21,7 +21,7 @@ class FastqIO(AxolotlIO):
     
     @classmethod
     def _getRecordDelimiter(cls) -> str:
-        return "@"
+        return "\n@"
     
     @classmethod
     def _getOutputDFclass(cls) -> ReadSequenceDF:
@@ -30,7 +30,9 @@ class FastqIO(AxolotlIO):
     @classmethod
     def _parseRecord(cls, text:str) -> dict:
         # TODO: parse quality other than Phred+33
-        rows = text.split("\n")[:4]
+        if text[0] == "@":
+            text = text[1:]
+        rows = text.rstrip("\n").split("\n")
         return {
             "seq_id": rows[0].split(" ", 1)[0],
             "desc": rows[0].split(" ", 1)[1] if " " in " " in rows[0] else "",
