@@ -200,7 +200,7 @@ class AxolotlIO(ABC):
         return cls._getOutputDFclass()(df)
         
     @classmethod
-    def loadBigFiles(cls, file_paths:list[str], intermediate_pq_path:str) -> ioDF:
+    def loadBigFiles(cls, file_paths:List[str], intermediate_pq_path:str) -> ioDF:
         spark = SparkSession.getActiveSession()
         if spark == None:
             raise Exception("can't find any Spark active session!")
