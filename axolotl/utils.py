@@ -1,4 +1,5 @@
 # axolotl utils
+from pyspark.sql import SparkSession
 from os import path
 import re
 
@@ -19,6 +20,9 @@ def check_file_exists(file_path):
     if matches["type"] == "file":
         return path.exists(matches["path"])
     elif matches["type"] == "dbfs":
+        spark = SparkSession.getActiveSession()
+        if spark == None:
+            raise Exception("can't find any Spark active session!")        
         try:
             from pyspark.dbutils import DBUtils
             dbutils = DBUtils(spark)
@@ -49,6 +53,9 @@ def is_directory(file_path):
     if matches["type"] == "file":
         return path.isdir(matches["path"])
     elif matches["type"] == "dbfs":
+        spark = SparkSession.getActiveSession()
+        if spark == None:
+            raise Exception("can't find any Spark active session!")        
         try:
             from pyspark.dbutils import DBUtils
             dbutils = DBUtils(spark)
